@@ -27,7 +27,7 @@ Simple Apigee proxy deployment using main pipeline solutions:
 |<img src="https://raw.githubusercontent.com/phylus-alpha/phylus/master/images/github.png" width="30"> |  GitHub | [Sample](https://github.com/echarish/apigee-cicd/tree/main/Apigee-Simple-Github-Pipeline)  | [Sample](https://github.com/echarish/apigee-cicd/tree/main/Apigee-Integration-Simple-GitHub-Pipeline) | [Sample](https://github.com/echarish/apigee-cicd/tree/main/Apigee-ApiHub-Simple-Github-Pipeline) |
 | <img src="https://about.gitlab.com/images/logo.png" width="30"> |  GitLab | [GitLab Sample](https://gitlab.com/clalevee/apigee-simple-gitlab_ci-pipeline-v2)  | - |  [GitLab Sample](https://gitlab.com/clalevee/apigee-apihub-simple-gitlab-pipeline)  |
 |<img src="https://avatars.githubusercontent.com/u/38220399?s=200&v=4" width="30"> |  Google Cloud Build | [Apigee DevRel GitHub](https://github.com/apigee/devrel/tree/main/references/cicd-pipeline)    |  - | - |
-|<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/Jenkins_logo.svg/1200px-Jenkins_logo.svg.png" width="30"> |  Jenkins | [Apigee DevRel GitHub](https://github.com/apigee/devrel/tree/main/references/cicd-pipeline)  alt="logo" width="20"/>  | - | - |
+|<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/Jenkins_logo.svg/1200px-Jenkins_logo.svg.png" width="30"> |  Jenkins | [Apigee DevRel GitHub](https://github.com/apigee/devrel/tree/main/references/cicd-pipeline)  | - | - |
 
 
 (1) End to end deployment and testing of an [Apigee Connector](https://cloud.google.com/apigee/docs/api-platform/connectors/about-connectors) (Google BigQuery), an [Apigee Integration](https://cloud.google.com/apigee/docs/api-platform/integration/what-is-apigee-integration) workflow and an Apigee Proxy.
