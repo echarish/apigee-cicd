@@ -40,7 +40,7 @@ Simple Apigee proxy deployment using main pipeline solutions:
 
 |  Tool |  Link | Description | 
 |---|---|---|
-|  CICD Pipeline for SharedFlows | [Apigee DevRel GitHub](https://github.com/apigee/devrel/tree/main/references/cicd-sharedflow-pipeline) <img src="https://github.com/echarish/apigee-cicd/tree/main/apigee-cicd/blob/main/apigee-logo.jpg?raw=true" alt="logo" width="20"/>  |  CI/CD pipeline for Apigee sharedflow using the Apigee Deploy Maven Plugin |
+|  CICD Pipeline for SharedFlows | [Apigee DevRel GitHub](https://github.com/apigee/devrel/tree/main/references/cicd-sharedflow-pipeline)   |  CI/CD pipeline for Apigee sharedflow using the Apigee Deploy Maven Plugin |
 |  Apigee X Environment Selector | [Sample](https://github.com/echarish/apigee-cicd/tree/main/apigee-envselector) | Select CI/CD pipeline target environment from an Environment Group |
 
 <BR>
