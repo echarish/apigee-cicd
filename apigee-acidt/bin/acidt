@@ -1,0 +1,113 @@
+#!/bin/bash
+
+
+set -e
+
+export ACIDT_ROOT=$( (cd "$(dirname "$0")" && cd .. && pwd ))
+source "$ACIDT_ROOT/lib/logutils.sh"
+
+print_usage() {
+    cat << EOF
+usage: ACIDT OBJECT COMMAND -o ORG -t TOKEN [options]
+
+ACIDT: Apigee Connection and Integration utility
+
+Objects:
+ connection
+ integration
+
+Commands:
+ download
+ create
+ list
+ publish (integration only)
+ delete
+
+Options:
+
+-d,--directory, path to the integration configuration file to be created (download)
+-f,--file, integration file name (create)
+-n,--name, integration name 
+-o,--organization, Apigee organization name (GCP project id or GCP project number)
+-r, --region, Apigee Integration target region
+-t,--token, GCP token 
+--debug, show verbose debug output
+EOF
+}
+
+TARGET_OBJ="$1"
+CMD_TYPE="$2"
+
+
+
+if [ -z "$CMD_TYPE" ] || [ "$CMD_TYPE" = "help" ]; then
+    print_usage
+    exit 0
+elif [ -z "$CMD_TYPE" ] || [ ! -f "$ACIDT_ROOT"/cmd/"$CMD_TYPE"/"$TARGET_OBJ-$CMD_TYPE".sh ];then
+    logerror "Please provide a valid command"
+    exit 1
+fi
+
+if [ -z "$TARGET_OBJ" ] || [ "$TARGET_OBJ" = "help" ]; then
+    print_usage
+    exit 0
+elif [ -z "$TARGET_OBJ" ] || [ ! -f "$ACIDT_ROOT"/cmd/"$CMD_TYPE"/"$TARGET_OBJ-$CMD_TYPE".sh ];then
+    logerror "Please provide a valid group"
+    exit 1
+fi
+
+
+for dependency in jq 
+do
+  if ! [ -x "$(command -v $dependency)" ]; then
+    >&2 logfatal "Required command is not on your PATH: $dependency."
+    >&2 logfatal "Please install it before you continue."
+    exit 2
+  fi
+done
+
+shift 2
+posArgs=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -d) export directory="$2"; shift 2;;
+    -f) export file="${2}"; shift 2;;
+    -n) export name="${2}"; shift 2;;
+    -o) export organization="$2"; shift 2;;
+    -r) export region="${2}"; shift 2;;
+    -t) export token="$2"; shift 2;;
+
+    --debug) export debug="T"; shift 1;;
+    --directory) export directory="${2}"; shift 2;;
+    --file) export file="${2}"; shift 2;;
+    --name) export name="${2}"; shift 2;;
+    --project) export organization="${2}"; shift 2;;
+    --region) export region="${2}"; shift 2;;
+    --token) export token="${2}"; shift 2;;
+
+    -*) logfatal "unknown option: $1" >&2; exit 1;;
+    *) posArgs+=("$1"); shift 1;;
+  esac
+done
+
+
+export token=${token:-$TOKEN}
+export organization=${organization:-$APIGEE_ORG}
+export directory="${directory:-$PWD}"
+
+if [ "$TARGET_OBJ" == "integration" ]; then
+    export region="${region:-us}"
+else
+    export region="${region:-us-west1}"
+fi
+
+
+if [[ -z "$token" ]]; then
+    logfatal "required  -t GCP access token"
+    exit 1
+fi
+
+logdebug "Apigee OAuth2 access token: ${token:0:8}..."
+logdebug "ACIDT command: $CMD_TYPE"
+"$ACIDT_ROOT"/cmd/"$CMD_TYPE"/"$TARGET_OBJ-$CMD_TYPE".sh "${posArgs[@]}"
