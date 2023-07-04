@@ -1,0 +1,255 @@
+
+name: Apigee API Hub CI with Maven
+
+on: push
+
+env:
+  # Default Target Apigee Organization et environment (can be also be dynamically defined in [Set Variables *] steps)
+  APIGEE_ORG: bap-emea-apigee-5
+  APIGEE_ENV: default-dev
+  TEST_HOST: 34.117.38.184.nip.io
+  GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+  
+  GIT_BRANCH: ''
+  AUTHOR_EMAIL: ''
+  APIGEE_DEPLOYMENT_SUFFIX: ''
+
+
+
+jobs:
+  Apigee-Commit-Check:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    # Map step outputs to a job outputs
+    outputs:
+      updateHub: ${{ steps.check_files_changed.outputs.updateHub }}
+      updateProxy: ${{ steps.check_files_changed.outputs.updateProxy }}
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          # Checkout as many commits as needed for the diff
+          fetch-depth: 2
+
+      # Check if ApiHub config file or specification file changed      
+      - name: check_files_changed
+        id: check_files_changed
+        shell: bash {0}
+        run: |
+          # Diff HEAD with the previous commit
+          diff=$(git diff --name-only HEAD^ HEAD)
+          echo "Files updated in the last commit:" $diff
+
+          # Check if **SPEC** file(s) changed
+          specConfigDiff=$(echo $diff | tr " " "\n" | grep -E "apiHub/api-config.yaml|apiHub/specs/.+\.(json|yaml)")
+
+          if [ -z "$specConfigDiff" ]
+          then
+            echo "No Api change"
+          else
+            echo "Api change -> [" $specConfigDiff "]"
+            echo "updateHub=true" >> $GITHUB_ENV
+            echo "updateHub=true" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check if ** PROXY ** file(s) changed
+          apiProxyDiff=$(echo $diff | tr " " "\n" | grep -E "apiProxy/apiproxy/.*")
+          if [ -z "$apiProxyDiff" ]
+          then
+            echo "No proxy change"
+          else
+            echo "Proxy change -> [" $apiProxyDiff "]"
+            echo "updateProxy=true" >> $GITHUB_ENV
+            echo "updateProxy=true" >> $GITHUB_OUTPUT
+          fi
+  
+
+
+
+  Apigee-Proxy-Deploy:
+    needs: Apigee-Commit-Check
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apiProxy
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # Determine if allsteps in this job must be skipped
+      # Currently it is not possible to early-exit the job with "success" status
+      # See: https://github.com/actions/runner/issues/662
+      - name: run-step-if
+        run: | 
+          echo "exit if no proxy update"
+          if [[ -n "${{ needs.Apigee-Commit-Check.outputs.updateProxy }}" ]]
+          then 
+            echo "run_step=true" >> $GITHUB_ENV
+          else
+            echo "Job not needed; no update in apiProxy folder."
+            echo "Skip all following steps."
+          fi
+
+      # Create Dependencies (npm) Cache 
+      - name: Cache node modules
+        if: ${{ env.run_step }}
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-node-modules
+        with:
+          # npm cache files are stored in `~/.npm` 
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      # Install dependencies (npm)
+      - name: Install Dependencies
+        if: ${{ env.run_step }}
+        run: npm install  --no-fund --silent
+
+      # Run apigeeLint test + upload artifact (apigeelint-out.html)
+      - name: apigeelint
+        if: ${{ env.run_step }}
+        run: ./node_modules/apigeelint/cli.js -s ./apiproxy -f html.js -e PO013,PO025 > ./apigeelint-out.html
+
+      - name: Archive Apigeelint results
+        if: ${{ env.run_step }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: apigeelint-report
+          path: ./apiProxy/apigeelint-out.html
+          retention-days: 5
+
+
+  # Run eslint test + upload artifact (eslint-out.html)
+      - name: eslint
+        if: ${{ env.run_step }}
+        run : ./node_modules/eslint/bin/eslint.js -c ./test/eslint/.eslintrc-jsc.yml --format html ./apiproxy/resources/jsc > ./eslint-out.html || true
+
+      - name: Archive esLint results
+        if: ${{ env.run_step }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: eslint-report
+          path: ./apiProxy/eslint-out.html
+          retention-days: 5
+
+
+  # Run JS Mocha test + upload artifact (coverage/index.html)
+      - name: mocha
+        if: ${{ env.run_step }}
+        run: ./node_modules/nyc/bin/nyc.js --reporter=html --reporter=text ./node_modules/mocha/bin/_mocha ./test/unit
+  
+      - name: Archive Mocha results
+        if: ${{ env.run_step }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: mocha-report
+          path:  ./apiProxy/coverage/index.html
+          retention-days: 5
+
+
+      # Setup Maven & Maven Cache
+      - name: Set up JDK 1.8
+        if: ${{ env.run_step }}
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+
+      - name: Cache the Maven packages to speed up build
+        if: ${{ env.run_step }}
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2   
+
+      # Generate SA key file from secret variable
+      - name: Generate SA key file
+        if: ${{ env.run_step }}
+        run: | 
+          echo $GCP_SERVICE_ACCOUNT > sa.json
+
+  
+  # Package & Deploy Apigee proxy (Apigee [Deploy] Maven plugin)
+      - name: mvn package
+        if: ${{ env.run_step }}
+        run: mvn process-resources -Pgoogleapi -Dcommit=$GIT_COMMIT -Dbranch=$GIT_BRANCH -Dauthor=$AUTHOR_EMAIL -Ddeployment.suffix=$APIGEE_DEPLOYMENT_SUFFIX
+
+      - name: mvn config
+        if: ${{ env.run_step }}
+        run: mvn apigee-enterprise:configure -q -Pgoogleapi -Dorg=$APIGEE_ORG -Denv=$APIGEE_ENV  -Ddeployment.suffix=$APIGEE_DEPLOYMENT_SUFFIX 
+
+      - name: mvn deploy proxy xhybrid
+        if: ${{ env.run_step }}
+        run: mvn apigee-enterprise:deploy -q -Pgoogleapi -Denv=$APIGEE_ENV -Dsa=sa.json -Dorg=$APIGEE_ORG -Ddeployment.suffix=$APIGEE_BUILD_DEPLOYMENT_SUFFIX 
+
+
+
+  # Run Integration testing (Apickli) + upload artifact (cucumber_report.html)
+      - name: apickli
+        if: ${{ env.run_step }}
+        run: |
+          # update apickli config file (init.js) with API hostname and base path
+          export API_BASEPATH="/airports-cicd/v1"
+          sed -i "s@api_basepath@$API_BASEPATH@g" ./test/integration/features/support/init.js
+          sed -i "s@organization_hostname@$TEST_HOST@g" ./test/integration/features/support/init.js
+
+          # NODE_TLS_REJECT_UNAUTHORIZED required to support self signed certificate
+          # export NODE_TLS_REJECT_UNAUTHORIZED=0
+
+          node ./node_modules/.bin/cucumber-js  ./test/$PROXY_NAME/integration --format json:./report.json
+          node ./test/integration/index.js
+
+      - name: Archive Apickli results
+        if: ${{ env.run_step }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: apickli-report
+          path: ./apiProxy/cucumber_report.html
+          retention-days: 5
+
+
+
+  Apigee-Hub-Publish:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    needs: [Apigee-Commit-Check, Apigee-Proxy-Deploy]
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apiHub
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # Determine if allsteps in this job must be skipped
+      # Currently it is not possible to early-exit the job with "success" status
+      # See: https://github.com/actions/runner/issues/662
+      - name: run-step-if
+        run: | 
+          echo "exit if no proxy update"
+          if [[ -n "${{ needs.Apigee-Commit-Check.outputs.updateHub }}" ]]
+          then 
+            echo "run_step=true" >> $GITHUB_ENV
+          else
+            echo "Job not needed; no update in apiHub folder."
+            echo "Skip all following steps."
+          fi
+
+      # Generate SA key file from secret variable
+      - name: Generate SA key file
+        if: ${{ env.run_step }}
+        run: | 
+          echo $GCP_SERVICE_ACCOUNT > sa.json
+
+      # Create/Update API in API Hub  
+      - name: Sync Apigee Api (Hub)
+        if: ${{ env.run_step }}
+        run: |
+          mvn install -Pdev -DprojectId=$APIGEE_ORG -Doptions=sync -Dfile=sa.json --no-transfer-progress
+

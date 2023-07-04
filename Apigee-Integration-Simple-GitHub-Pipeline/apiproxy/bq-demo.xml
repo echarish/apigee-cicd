@@ -1,0 +1,23 @@
+<APIProxy revision="12" name="bq-demo">
+    <DisplayName></DisplayName>
+    <Description></Description>
+    <CreatedAt>1651010273439</CreatedAt>
+    <LastModifiedAt>1651010273439</LastModifiedAt>
+    <BasePaths>/v1/products</BasePaths>
+    <Policies>
+        <Policy>set-integration-request</Policy>
+        <Policy>JS-formatResult</Policy>
+        <Policy>EV-getResponseContent</Policy>
+        <Policy>RF-404NotFound</Policy>
+        <Policy>AM_getID</Policy>
+    </Policies>
+    <ProxyEndpoints>
+        <ProxyEndpoint>default</ProxyEndpoint>
+    </ProxyEndpoints>
+    <Resources>
+        <Resource>jsc://JS-formatResult.js</Resource>
+    </Resources>
+    <IntegrationEndpoints>
+        <IntegrationEndpoint>default</IntegrationEndpoint>
+    </IntegrationEndpoints>
+</APIProxy>

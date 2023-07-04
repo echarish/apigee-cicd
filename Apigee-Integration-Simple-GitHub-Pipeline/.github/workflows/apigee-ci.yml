@@ -1,0 +1,192 @@
+
+name: Apigee Connector / Integration / Proxy CI 
+
+on: push
+
+env:
+  # Big Query DataSet
+  BQ_PROJECT_ID: "YOUR-PROJECT_ID"
+  BQ_DATASET_ID: "YOUR-DATASET_ID"
+  BQ_TABLE_NAME: "int-bqdemo"
+  
+  # Connection
+  CONNECTOR_PROJECT_ID: "YOUR-PROJECT_ID"
+  CONNECTOR_NAME: "int-bqdemo"
+  CONNECTOR_LOCATION: "us-west1"
+  CONNECTOR_SERVICE_ACCOUNT: "YOUR-CONNECTOR-SA"
+
+  # Integration
+  # (Integration will be deployed in the same project as Apigee Proxy = APIGEE_ORG)
+  INTEGRATION_NAME: "int-bqdemo"
+  INTEGRATION_LOCATION: "us"
+ 
+  # Apigee Default Target Apigee Organization et environment (can be also be dynamically defined in [Set Variables *] steps)
+  APIGEE_ORG: "YOUR-ORGANIZATION"
+  APIGEE_ENV: "YOUR-ENV"
+  TEST_HOST: "YOUR-HOSTNAME"
+
+  # SA email required to deploy Apigee proxy that requires Apigee to generate the GoogleAccessToken or GoogleIDToken to use Integration
+  SERVICE_ACCOUNT_TOKEN: "YOUR-SA-TOKEN"
+
+  # SA key file content used to deploy Connection, Integraiton, Proxy
+  GCP_CREDENTIALS: '${{ secrets.GCP_CREDENTIALS }}'
+  
+  GIT_BRANCH: ''
+  AUTHOR_EMAIL: ''
+
+jobs:
+  Integration-Deploy:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      # Apigee Acidt: install Connection/Integration CLI from GitHub g-lalevee/apigee-acidt
+      - name: 'Install Apigee Acidt'
+        run: |
+          git clone https://github.com/g-lalevee/apigee-acidt.git
+
+
+      # google-github-actions: Authenticate against Google Cloud with Service Account (Secret) 
+      - id: 'auth'
+        uses: 'google-github-actions/auth@v0'
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+
+      # google-github-actions: Install and configure gcloud (alpha for Apigee commands)
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v0'
+
+
+      # Retrieve list of connections
+      - name: 'List Apigee Connections'
+        run: |
+          export TOKEN=$(gcloud auth print-access-token)
+          ./apigee-acidt/bin/acidt connection list -o $APIGEE_ORG -t $TOKEN -r $CONNECTOR_LOCATION  
+
+
+      # Create new Connection
+      - name: 'Create Apigee Connection'
+        run: |
+          sed -i "s/CONNECTOR_PROJECT_ID/$CONNECTOR_PROJECT_ID/g" ./connection/connection-bq-template.json 
+          sed -i "s/BQ_PROJECT_ID/$BQ_PROJECT_ID/g" ./connection/connection-bq-template.json 
+          sed -i "s/BQ_DATASET_ID/$BQ_DATASET_ID/g" ./connection/connection-bq-template.json 
+          sed -i "s/SERVICE_ACCOUNT/$CONNECTOR_SERVICE_ACCOUNT/g" ./connection/connection-bq-template.json 
+
+          export TOKEN=$(gcloud auth print-access-token)
+          ./apigee-acidt/bin/acidt connection create -o $CONNECTOR_PROJECT_ID -t $TOKEN -r $CONNECTOR_LOCATION --name $CONNECTOR_NAME --file ./connection/connection-bq-template.json 
+
+
+      # Create new Integration
+      - name: 'Create Apigee Integration'
+        run: |
+          export TOKEN=$(gcloud auth print-access-token)
+
+          # retrieve Connector serviceName
+          ./apigee-acidt/bin/acidt connection download -o $CONNECTOR_PROJECT_ID -t $TOKEN -r $CONNECTOR_LOCATION --name $CONNECTOR_NAME --directory . --debug
+          CONNECTOR_SERVICE_DIRECTORY=$(cat $CONNECTOR_NAME.json | grep "serviceDirectory" | cut -d ':' -f2 | tr -d '"' | xargs)
+ 
+          # update Integration configuration file with new connection parameters
+          sed -i "s/CONNECTOR_PROJECT_ID/$CONNECTOR_PROJECT_ID/g" ./integration/integration-bq-template.json
+          sed -i "s/CONNECTOR_NAME/$CONNECTOR_NAME/g" ./integration/integration-bq-template.json
+          sed -i "s/CONNECTOR_LOCATION/$CONNECTOR_LOCATION/g" ./integration/integration-bq-template.json
+          sed -i "s@CONNECTOR_SERVICE_DIRECTORY@$CONNECTOR_SERVICE_DIRECTORY@g" ./integration/integration-bq-template.json
+          sed -i "s/BQ_TABLE_NAME/$BQ_TABLE_NAME/g" ./integration/integration-bq-template.json
+
+          # create and deploy integration
+          ./apigee-acidt/bin/acidt integration create  -o $APIGEE_ORG -t $TOKEN -r $INTEGRATION_LOCATION --name $INTEGRATION_NAME --file ./integration/integration-bq-template.json --debug
+          ./apigee-acidt/bin/acidt integration publish  -o $APIGEE_ORG -t $TOKEN -r $INTEGRATION_LOCATION --name $INTEGRATION_NAME --debug
+
+  Apigee-Deploy:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    needs: Integration-Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      # Setup Maven & Maven Cache
+      - name: Set up JDK 1.8
+        uses: actions/setup-java@v1
+        with:
+          java-version: 1.8
+
+
+      - name: Cache the Maven packages to speed up build
+        uses: actions/cache@v1
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2   
+
+
+      # Create Dependencies (npm) Cache 
+      - name: Cache node modules
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-node-modules
+        with:
+          # npm cache files are stored in `~/.npm` 
+          path: ~/.npm
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+
+      # Install dependencies (npm)
+      - name: Install Dependencies
+        run: npm install --silent --no-fund
+
+
+      # Generate SA key file from secret variable
+      - name: Generate SA key file
+        run: | 
+          echo $GCP_CREDENTIALS 
+          echo $GCP_CREDENTIALS > sa.json
+          cat ./sa.json
+
+
+      - name: 'Update Integration Request policy'
+        run: |
+          # update Integration configuration file with new connection parameters
+          sed -i "s/APIGEE_ORG/$APIGEE_ORG/g" ./apiproxy/policies/set-integration-request.xml
+          sed -i "s/INTEGRATION_NAME/$INTEGRATION_NAME/g" ./apiproxy/policies/set-integration-request.xml
+
+
+      # Package & Deploy Apigee proxy (Apigee [Deploy] Maven plugin)
+      - name: mvn package
+        run: mvn process-resources -Pgoogleapi -Dcommit=$GIT_COMMIT -Dbranch=$GIT_BRANCH -Dauthor=$AUTHOR_EMAIL -Ddeployment.suffix=''
+
+      - name: mvn config
+        run: mvn apigee-enterprise:configure -q -Pgoogleapi -Dorg=$APIGEE_ORG -Denv=$APIGEE_ENV  -Ddeployment.suffix='' 
+
+      - name: mvn deploy proxy xhybrid
+        run: mvn apigee-enterprise:deploy -q -Pgoogleapi -Denv=$APIGEE_ENV -Dsa=sa.json -Dorg=$APIGEE_ORG -DgoogleTokenEmail=$SERVICE_ACCOUNT_TOKEN -Ddeployment.suffix=''
+
+      # Run Integration testing (Apickli) + upload artifact (cucumber_report.html)
+      - name: apickli
+        run: |
+          # update apickli config file (init.js) with API hostname and base path
+          export API_BASEPATH="/v1/products"
+          sed -i "s@api_basepath@$API_BASEPATH@g" ./test/integration/features/support/init.js
+          sed -i "s@organization_hostname@$TEST_HOST@g" ./test/integration/features/support/init.js
+
+          # NODE_TLS_REJECT_UNAUTHORIZED required to support self signed certificate
+          # export NODE_TLS_REJECT_UNAUTHORIZED=0
+
+          node ./node_modules/.bin/cucumber-js  ./test/integration --format json:./report.json
+          node ./test/integration/index.js
+
+
+      - name: Archive Apickli results
+        if: success() || failure()
+        uses: actions/upload-artifact@v2
+        with:
+          name: apickli-report
+          path: ./cucumber_report.html
+          retention-days: 5
+
+
+
